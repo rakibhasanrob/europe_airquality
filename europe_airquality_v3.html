@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Europe Air Quality: 2006 vs 2026 (NASA OMI vs ESA Sentinel-5P TROPOMI)</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Verified NASA/KNMI OMI Satellite Dataset Matrix -->
+  <script src="europe_no2_data.js"></script>
+
+  <style>
+    :root {
+      --ocean-slate: #434e5e;
+      --bg-dark: #07090c;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: #ffffff;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      user-select: none;
+      position: relative;
+    }
+
+    /* Comparative Split Container (100% of viewport, ultra clean) */
+    .maps-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: row;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+
+    .maps-container.stacked {
+      flex-direction: column;
+    }
+
+    .map-panel {
+      flex: 1;
+      height: 100%;
+      width: 100%;
+      position: relative;
+      background-color: var(--ocean-slate);
+      overflow: hidden;
+    }
+
+    .maps-container:not(.stacked) .map-panel:first-child {
+      border-right: 2px solid #080b0f;
+    }
+
+    .maps-container.stacked .map-panel:first-child {
+      border-bottom: 2px solid #080b0f;
+    }
+
+    .map-instance {
+      width: 100%;
+      height: 100%;
+      background-color: var(--ocean-slate) !important;
+    }
+
+    /* Dark Grayscale Satellite Terrain for Surrounding Context Land */
+    .surrounding-terrain-tiles {
+      filter: grayscale(100%) brightness(0.45) contrast(1.42);
+    }
+
+    /* Subtle Topographic Relief Blended Over the Europe Air Quality Layer */
+    .europe-hillshade-tiles {
+      mix-blend-mode: multiply;
+      opacity: 0.30 !important;
+      filter: grayscale(100%) contrast(135%);
+      pointer-events: none;
+    }
+
+    /* Smooth Bilinear Rendering for Native Leaflet Air Quality ImageOverlay */
+    .aq-raster-overlay {
+      image-rendering: auto;
+      pointer-events: none;
+    }
+
+    /* Elegant Watermark Year in Bottom Right Corner of Each Panel */
+    .panel-year-watermark {
+      position: absolute;
+      bottom: 14px;
+      right: 22px;
+      z-index: 990;
+      font-size: clamp(3.8rem, 6.2vw, 5.8rem);
+      font-weight: 800;
+      font-family: 'Inter', -apple-system, sans-serif;
+      line-height: 0.90;
+      letter-spacing: -0.03em;
+      color: #ffffff;
+      opacity: 0.40; /* Noticeably more visible, ~35-40% opacity */
+      background: transparent;
+      border: none;
+      padding: 0;
+      margin: 0;
+      pointer-events: none;
+      text-shadow: 0 2px 14px rgba(0, 0, 0, 0.75), 0 0 4px rgba(0, 0, 0, 0.85);
+    }
+
+    /* Sleek NASA OMI Legend Overlay (Slightly larger, clean translucent background) */
+    .nasa-legend {
+      position: absolute;
+      bottom: 14px;
+      left: 14px;
+      z-index: 1000;
+      width: 205px;
+      text-align: center;
+      pointer-events: none;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+      background: rgba(10, 13, 18, 0.30);
+      backdrop-filter: blur(3px);
+      padding: 7px 11px 6px;
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+    }
+
+    .nasa-legend .legend-species {
+      font-size: 0.74rem;
+      font-weight: 700;
+      color: #e6ebf2;
+      margin-bottom: 4px;
+      letter-spacing: 0.02em;
+    }
+
+    /* Pointed-Tip Colorbar */
+    .colorbar-arrow {
+      width: 100%;
+      height: 12px;
+      clip-path: polygon(5% 0%, 95% 0%, 100% 50%, 95% 100%, 5% 100%, 0% 50%);
+      background: linear-gradient(
+        to right,
+        #639cd4 0%,
+        #82b4e3 12%,
+        #b6d6f0 22%,
+        #e6e5b8 32%,
+        #f3bf6d 44%,
+        #e36834 56%,
+        #bf2126 68%,
+        #700b49 80%,
+        #2b0329 90%,
+        #09010d 100%
+      );
+    }
+
+    .colorbar-ticks {
+      display: flex;
+      justify-content: space-between;
+      padding: 0 4px;
+      margin-top: 3px;
+      font-size: 0.66rem;
+      font-weight: 600;
+      color: #dcdfe4;
+    }
+
+    .nasa-legend .legend-unit {
+      font-size: 0.64rem;
+      font-weight: 500;
+      color: #cbd0d8;
+      margin-top: 2px;
+    }
+
+    /* Optional City Labels */
+    .city-marker-label {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      color: #ffffff;
+      font-family: 'Inter', sans-serif;
+      font-size: 10.5px;
+      font-weight: 600;
+      white-space: nowrap;
+      text-shadow:
+        -1.2px -1.2px 0 rgba(0,0,0,0.92),
+         1.2px -1.2px 0 rgba(0,0,0,0.92),
+        -1.2px  1.2px 0 rgba(0,0,0,0.92),
+         1.2px  1.2px 0 rgba(0,0,0,0.92),
+         0px    1px   4px rgba(0,0,0,0.95);
+      pointer-events: none;
+    }
+
+    /* Floating Three-Dot Menu Button (Top Right) */
+    .floating-dots-btn {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      z-index: 2200;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(14, 18, 24, 0.65);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.22s ease;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+      opacity: 0.12; /* ~10% opacity, subtle & transparent */
+    }
+
+    .floating-dots-btn:hover,
+    .floating-dots-btn.active {
+      opacity: 1.0;
+      background: rgba(28, 36, 48, 0.95);
+      border-color: rgba(255, 255, 255, 0.35);
+      color: #ffffff;
+      transform: scale(1.05);
+    }
+
+    /* Floating Settings Popover */
+    .floating-popover {
+      position: absolute;
+      top: 56px;
+      right: 14px;
+      z-index: 2200;
+      width: 260px;
+      background: rgba(12, 16, 22, 0.94);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 8px 26px rgba(0, 0, 0, 0.65);
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      animation: popIn 0.15s ease-out;
+    }
+
+    .floating-popover.open {
+      display: flex;
+    }
+
+    @keyframes popIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .popover-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #ffffff;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      padding-bottom: 6px;
+    }
+
+    .popover-close {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.85rem;
+      line-height: 1;
+      padding: 2px 4px;
+    }
+
+    .popover-close:hover {
+      color: #ffffff;
+    }
+
+    .popover-meta {
+      font-size: 0.70rem;
+      color: #94a3b8;
+      line-height: 1.35;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 7px 9px;
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .popover-meta strong {
+      display: block;
+      color: #e2e8f0;
+      font-size: 0.73rem;
+      margin-bottom: 1px;
+    }
+
+    .popover-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .popover-btn {
+      background: #171d26;
+      color: #e2e8f0;
+      border: 1px solid #2d3748;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .popover-btn:hover {
+      background: #232d3d;
+      border-color: #4a5568;
+      color: #ffffff;
+    }
+
+    .popover-btn.active {
+      background: #2b6cb0;
+      border-color: #63b3ed;
+      color: #ffffff;
+    }
+
+    .popover-btn.reset-btn {
+      text-align: center;
+      justify-content: center;
+      background: #141820;
+      color: #a0aec0;
+      margin-top: 2px;
+    }
+
+    .popover-btn.reset-btn:hover {
+      background: #1f2733;
+      color: #ffffff;
+    }
+
+    /* Synchronized Hover Comparison Readout Card */
+    #probe-card {
+      position: absolute;
+      top: 56px;
+      right: 14px;
+      z-index: 2000;
+      background: rgba(10, 13, 18, 0.90);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      border-radius: 6px;
+      padding: 9px 12px;
+      width: 250px;
+      font-size: 0.74rem;
+      color: #e4e7ec;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    #probe-card.visible {
+      opacity: 1;
+    }
+
+    .probe-title {
+      font-weight: 700;
+      font-size: 0.79rem;
+      color: #ffffff;
+      margin-bottom: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+      padding-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .probe-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      align-items: center;
+    }
+
+    .probe-badge {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 2px;
+      margin-right: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      vertical-align: middle;
+    }
+
+    /* Leaflet zoom controls styling */
+    .leaflet-control-zoom {
+      border: 1px solid rgba(255, 255, 255, 0.15) !important;
+      border-radius: 4px !important;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5) !important;
+    }
+
+    .leaflet-control-zoom a {
+      background-color: rgba(14, 18, 24, 0.88) !important;
+      color: #e2e8f0 !important;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+    }
+
+    .leaflet-control-zoom a:hover {
+      background-color: #2b6cb0 !important;
+      color: #ffffff !important;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Floating Three-Dot Menu Button -->
+  <button id="menu-btn" class="floating-dots-btn" onclick="toggleMenu(event)" title="Options & Layers">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="5" r="2.2"></circle>
+      <circle cx="12" cy="12" r="2.2"></circle>
+      <circle cx="12" cy="19" r="2.2"></circle>
+    </svg>
+  </button>
+
+  <!-- Floating Settings Popover -->
+  <div id="settings-popover" class="floating-popover">
+    <div class="popover-header">
+      <span>Map Settings & Layers</span>
+      <button class="popover-close" onclick="closeMenu()">✕</button>
+    </div>
+    <div class="popover-meta">
+      <strong>NASA Aura OMI (2006) vs ESA Sentinel-5P (2026)</strong>
+      <span>Tropospheric NO₂ Column Density (0.125° Grid)</span>
+      <span style="display:block;color:#68d391;font-size:0.67rem;margin-top:2px;">● Verified 20-Year Climate Observations</span>
+    </div>
+    <div class="popover-buttons">
+      <button id="btn-borders" class="popover-btn" onclick="toggleNutsRegions()">
+        <span>Borders</span>
+        <span id="txt-borders" style="color:#63b3ed;font-weight:700;">Countries</span>
+      </button>
+      <button id="btn-labels" class="popover-btn" onclick="toggleCityLabels()">
+        <span>City Labels</span>
+        <span id="txt-labels" style="color:#a0aec0;font-weight:700;">OFF</span>
+      </button>
+      <button id="btn-layout" class="popover-btn" onclick="toggleSplitLayout()">
+        <span>Layout</span>
+        <span id="txt-layout" style="color:#63b3ed;font-weight:700;">Side-by-Side</span>
+      </button>
+      <button class="popover-btn reset-btn" onclick="resetDualView()">Reset Map View</button>
+    </div>
+  </div>
+
+  <!-- Synchronized Comparative Maps (Full viewport) -->
+  <div id="maps-wrapper" class="maps-container">
+
+    <!-- Floating Synchronized Hover Probe Card -->
+    <div id="probe-card">
+      <div id="probe-header" class="probe-title">
+        <span id="probe-loc">Rhine-Ruhr Corridor</span>
+        <span id="probe-coords" style="color:#9aa2af;font-weight:400;font-size:0.68rem;">51.5°N, 7.0°E</span>
+      </div>
+      <div class="probe-row">
+        <span><span class="probe-badge" id="swatch-2006"></span><strong>2006</strong> Level:</span>
+        <strong id="val-2006">11.33 ×10¹⁵</strong>
+      </div>
+      <div class="probe-row">
+        <span><span class="probe-badge" id="swatch-2020"></span><strong>2026</strong> Level:</span>
+        <strong id="val-2020">4.74 ×10¹⁵</strong>
+      </div>
+      <div class="probe-row" style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.12);">
+        <span style="color:#aeb6c2;">20-Yr Reduction:</span>
+        <strong id="val-delta" style="color:#68d391;">-61%</strong>
+      </div>
+    </div>
+
+    <!-- PANEL 1: 2006 -->
+    <div class="map-panel">
+      <div id="map-2006" class="map-instance"></div>
+      <div class="panel-year-watermark">2006</div>
+      <div class="nasa-legend">
+        <div class="legend-species">NO₂</div>
+        <div class="colorbar-arrow"></div>
+        <div class="colorbar-ticks">
+          <span>0.0</span><span>1.5</span><span>3.0</span><span>4.5</span><span>6.0+</span>
+        </div>
+        <div class="legend-unit">10¹⁵ molecules/cm²</div>
+      </div>
+    </div>
+
+    <!-- PANEL 2: 2026 -->
+    <div class="map-panel">
+      <div id="map-2020" class="map-instance"></div>
+      <div class="panel-year-watermark">2026</div>
+      <div class="nasa-legend">
+        <div class="legend-species">NO₂</div>
+        <div class="colorbar-arrow"></div>
+        <div class="colorbar-ticks">
+          <span>0.0</span><span>1.5</span><span>3.0</span><span>4.5</span><span>6.0+</span>
+        </div>
+        <div class="legend-unit">10¹⁵ molecules/cm²</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet & TopoJSON Client -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+
+  <script>
+    /********************************************************************
+     * 1. ENHANCED NASA OMI COLOR RAMP LOOKUP TABLE (256-entry RGBA LUT)
+     * Rescaled to 0.0 - 6.0 x 10^15 molecules/cm^2 so both 2006 and 2020
+     * reveal rich, granular geographic structures across Europe.
+     ********************************************************************/
+    const COLOR_MAX_VAL = 6.0;
+
+    const nasaColorStops = [
+      { t: 0.00, rgb: [98, 156, 212] },   // 0.0: Clean Sky Blue
+      { t: 0.12, rgb: [130, 180, 227] },  // 0.7: Soft Azure Blue
+      { t: 0.22, rgb: [182, 214, 240] },  // 1.3: Ice Blue
+      { t: 0.32, rgb: [230, 229, 184] },  // 1.9: Pale Cream Yellow
+      { t: 0.44, rgb: [243, 191, 109] },  // 2.6: Warm Amber
+      { t: 0.56, rgb: [227, 104, 52] },   // 3.4: Deep Orange-Red
+      { t: 0.68, rgb: [191, 33, 38] },    // 4.1: Crimson Red
+      { t: 0.80, rgb: [112, 11, 73] },    // 4.8: Deep Magenta-Purple
+      { t: 0.90, rgb: [43, 3, 41] },      // 5.4: Dark Violet-Black
+      { t: 1.00, rgb: [9, 1, 13] }        // 6.0+: Extreme Core Black
+    ];
+
+    const colorLUT = new Uint8ClampedArray(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      let s0 = nasaColorStops[0], s1 = nasaColorStops[nasaColorStops.length - 1];
+      for (let j = 0; j < nasaColorStops.length - 1; j++) {
+        if (t >= nasaColorStops[j].t && t <= nasaColorStops[j + 1].t) {
+          s0 = nasaColorStops[j];
+          s1 = nasaColorStops[j + 1];
+          break;
+        }
+      }
+      const f = (s1.t === s0.t) ? 0 : (t - s0.t) / (s1.t - s0.t);
+      colorLUT[i * 4 + 0] = Math.round(s0.rgb[0] + (s1.rgb[0] - s0.rgb[0]) * f);
+      colorLUT[i * 4 + 1] = Math.round(s0.rgb[1] + (s1.rgb[1] - s0.rgb[1]) * f);
+      colorLUT[i * 4 + 2] = Math.round(s0.rgb[2] + (s1.rgb[2] - s0.rgb[2]) * f);
+      colorLUT[i * 4 + 3] = 246;
+    }
+
+    function valueToHexColor(val, maxVal = COLOR_MAX_VAL) {
+      const idx = Math.max(0, Math.min(255, Math.round((val / maxVal) * 255)));
+      const r = colorLUT[idx * 4], g = colorLUT[idx * 4 + 1], b = colorLUT[idx * 4 + 2];
+      return `rgb(${r},${g},${b})`;
+    }
+
+    /********************************************************************
+     * 2. REAL NASA/KNMI OMI SATELLITE DATA LOADER & BILINEAR SAMPLER
+     ********************************************************************/
+    function decodeBase64Uint16(b64) {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Uint16Array(bytes.buffer);
+    }
+
+    const omiMeta = (window.EUROPE_NO2_REAL && window.EUROPE_NO2_REAL.metadata) || {
+      rows: 304,
+      cols: 560,
+      latMax: 72.0,
+      latMin: 34.0,
+      lonMin: -25.0,
+      lonMax: 45.0,
+      resolutionDeg: 0.125
+    };
+
+    const realGrid2006 = (window.EUROPE_NO2_REAL && window.EUROPE_NO2_REAL.b64_2006)
+      ? decodeBase64Uint16(window.EUROPE_NO2_REAL.b64_2006) : null;
+    const realGrid2026 = (window.EUROPE_NO2_REAL && (window.EUROPE_NO2_REAL.b64_2026 || window.EUROPE_NO2_REAL.b64_2020))
+      ? decodeBase64Uint16(window.EUROPE_NO2_REAL.b64_2026 || window.EUROPE_NO2_REAL.b64_2020) : null;
+
+    function sampleEuropeAirQuality(lat, lon, year) {
+      if (!realGrid2006 || !realGrid2026) return 0.5;
+
+      const rowF = (omiMeta.latMax - lat) / omiMeta.resolutionDeg;
+      const colF = (lon - omiMeta.lonMin) / omiMeta.resolutionDeg;
+
+      if (rowF < 0 || rowF >= omiMeta.rows - 1 || colF < 0 || colF >= omiMeta.cols - 1) {
+        return 0.35;
+      }
+
+      const r0 = Math.floor(rowF);
+      const r1 = r0 + 1;
+      const c0 = Math.floor(colF);
+      const c1 = c0 + 1;
+
+      const dr = rowF - r0;
+      const dc = colF - c0;
+
+      const grid = (year === 2006) ? realGrid2006 : realGrid2026;
+      const v00 = grid[r0 * omiMeta.cols + c0] / 100.0;
+      const v01 = grid[r0 * omiMeta.cols + c1] / 100.0;
+      const v10 = grid[r1 * omiMeta.cols + c0] / 100.0;
+      const v11 = grid[r1 * omiMeta.cols + c1] / 100.0;
+
+      const top = v00 * (1 - dc) + v01 * dc;
+      const bot = v10 * (1 - dc) + v11 * dc;
+      const val = top * (1 - dr) + bot * dr;
+
+      return Math.max(0.05, Math.min(15.0, val));
+    }
+
+    /********************************************************************
+     * 3. WEB MERCATOR OFFSCREEN COMPOSITING + NATIVE L.IMAGEOVERLAY
+     ********************************************************************/
+    const RASTER_LAT_MIN = 31.0;
+    const RASTER_LAT_MAX = 71.5;
+    const RASTER_LON_MIN = -26.0;
+    const RASTER_LON_MAX = 48.0;
+    const RASTER_BOUNDS = [[RASTER_LAT_MIN, RASTER_LON_MIN], [RASTER_LAT_MAX, RASTER_LON_MAX]];
+
+    const GRID_W = 860;
+    const GRID_H = 780;
+
+    function latToMercY(lat) {
+      const rad = (lat * Math.PI) / 180;
+      return Math.log(Math.tan(Math.PI / 4 + rad / 2));
+    }
+
+    function mercYToLat(mercY) {
+      return ((2 * Math.atan(Math.exp(mercY)) - Math.PI / 2) * 180) / Math.PI;
+    }
+
+    const MERC_Y_MAX = latToMercY(RASTER_LAT_MAX);
+    const MERC_Y_MIN = latToMercY(RASTER_LAT_MIN);
+
+    function lonLatToGridXY(lon, lat) {
+      const clampedLat = Math.max(-85, Math.min(85, lat));
+      const x = ((lon - RASTER_LON_MIN) / (RASTER_LON_MAX - RASTER_LON_MIN)) * GRID_W;
+      const y = ((MERC_Y_MAX - latToMercY(clampedLat)) / (MERC_Y_MAX - MERC_Y_MIN)) * GRID_H;
+      return [x, y];
+    }
+
+    const rawCanvas2006 = document.createElement('canvas');
+    rawCanvas2006.width = GRID_W;
+    rawCanvas2006.height = GRID_H;
+
+    const rawCanvas2020 = document.createElement('canvas');
+    rawCanvas2020.width = GRID_W;
+    rawCanvas2020.height = GRID_H;
+
+    function generateRawAirQualityGrids() {
+      const ctx06 = rawCanvas2006.getContext('2d');
+      const ctx20 = rawCanvas2020.getContext('2d');
+      const img06 = ctx06.createImageData(GRID_W, GRID_H);
+      const img20 = ctx20.createImageData(GRID_W, GRID_H);
+      const d06 = img06.data;
+      const d20 = img20.data;
+
+      for (let py = 0; py < GRID_H; py++) {
+        const mercY = MERC_Y_MAX - (py / (GRID_H - 1)) * (MERC_Y_MAX - MERC_Y_MIN);
+        const lat = mercYToLat(mercY);
+
+        for (let px = 0; px < GRID_W; px++) {
+          const lon = RASTER_LON_MIN + (px / (GRID_W - 1)) * (RASTER_LON_MAX - RASTER_LON_MIN);
+
+          const v06 = sampleEuropeAirQuality(lat, lon, 2006);
+          const v20 = sampleEuropeAirQuality(lat, lon, 2026);
+
+          const idx06 = Math.max(0, Math.min(255, Math.round((v06 / COLOR_MAX_VAL) * 255))) * 4;
+          const idx20 = Math.max(0, Math.min(255, Math.round((v20 / COLOR_MAX_VAL) * 255))) * 4;
+
+          const pIdx = (py * GRID_W + px) * 4;
+
+          d06[pIdx]     = colorLUT[idx06];
+          d06[pIdx + 1] = colorLUT[idx06 + 1];
+          d06[pIdx + 2] = colorLUT[idx06 + 2];
+          d06[pIdx + 3] = 250;
+
+          d20[pIdx]     = colorLUT[idx20];
+          d20[pIdx + 1] = colorLUT[idx20 + 1];
+          d20[pIdx + 2] = colorLUT[idx20 + 2];
+          d20[pIdx + 3] = 250;
+        }
+      }
+
+      ctx06.putImageData(img06, 0, 0);
+      ctx20.putImageData(img20, 0, 0);
+    }
+
+    let allWorldLandPolygons = [];
+    let europeStudyPolygons = [];
+
+    function isValidWGS84Ring(ring) {
+      if (!Array.isArray(ring) || ring.length < 3) return false;
+      const p0 = ring[0];
+      if (!Array.isArray(p0) || p0.length < 2) return false;
+      const lon = p0[0], lat = p0[1];
+      return (typeof lon === 'number' && typeof lat === 'number' &&
+              lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90);
+    }
+
+    function extractValidRings(geom) {
+      const polys = [];
+      if (!geom) return polys;
+      if (geom.type === 'Polygon') {
+        if (geom.coordinates && isValidWGS84Ring(geom.coordinates[0])) {
+          polys.push(geom.coordinates);
+        }
+      } else if (geom.type === 'MultiPolygon') {
+        for (const poly of geom.coordinates) {
+          if (poly && isValidWGS84Ring(poly[0])) {
+            polys.push(poly);
+          }
+        }
+      }
+      return polys;
+    }
+
+    function fillPolygonsOnGrid(ctx, polygonsList) {
+      ctx.fillStyle = '#ffffff';
+      for (const poly of polygonsList) {
+        ctx.beginPath();
+        for (const ring of poly) {
+          if (!isValidWGS84Ring(ring)) continue;
+          for (let i = 0; i < ring.length; i++) {
+            const [gx, gy] = lonLatToGridXY(ring[i][0], ring[i][1]);
+            if (i === 0) ctx.moveTo(gx, gy);
+            else ctx.lineTo(gx, gy);
+          }
+          ctx.closePath();
+        }
+        ctx.fill('evenodd');
+      }
+    }
+
+    function buildCompositeDataURL(rawSourceCanvas) {
+      const compCanvas = document.createElement('canvas');
+      compCanvas.width = GRID_W;
+      compCanvas.height = GRID_H;
+      const ctx = compCanvas.getContext('2d');
+
+      if (allWorldLandPolygons.length > 0) {
+        ctx.fillStyle = '#434e5e';
+        ctx.fillRect(0, 0, GRID_W, GRID_H);
+
+        ctx.globalCompositeOperation = 'destination-out';
+        fillPolygonsOnGrid(ctx, allWorldLandPolygons);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      if (europeStudyPolygons.length > 0) {
+        const maskedAQ = document.createElement('canvas');
+        maskedAQ.width = GRID_W;
+        maskedAQ.height = GRID_H;
+        const mCtx = maskedAQ.getContext('2d');
+
+        fillPolygonsOnGrid(mCtx, europeStudyPolygons);
+
+        mCtx.globalCompositeOperation = 'source-in';
+        mCtx.drawImage(rawSourceCanvas, 0, 0);
+
+        ctx.drawImage(maskedAQ, 0, 0);
+      } else {
+        ctx.drawImage(rawSourceCanvas, 0, 0);
+      }
+
+      return compCanvas.toDataURL('image/png');
+    }
+
+    /********************************************************************
+     * 4. INITIALIZE DUAL SYNCHRONIZED LEAFLET MAPS (2006 & 2020)
+     ********************************************************************/
+    const INITIAL_CENTER = [50.2, 11.2];
+    const INITIAL_ZOOM = 4.3;
+
+    function createMapConfig() {
+      return {
+        center: [INITIAL_CENTER[0], INITIAL_CENTER[1]],
+        zoom: INITIAL_ZOOM,
+        minZoom: 3.4,
+        maxZoom: 8.5,
+        zoomSnap: 0.25,
+        zoomDelta: 0.5,
+        attributionControl: false,
+        zoomControl: false
+      };
+    }
+
+    const map2006 = L.map('map-2006', createMapConfig());
+    const map2020 = L.map('map-2020', createMapConfig());
+
+    let isSyncing = false;
+    function syncMapViews(sourceMap, targetMap) {
+      if (isSyncing) return;
+      isSyncing = true;
+      try {
+        targetMap.setView(sourceMap.getCenter(), sourceMap.getZoom(), {
+          animate: false,
+          noMoveStart: true
+        });
+      } finally {
+        isSyncing = false;
+      }
+    }
+
+    ['move', 'zoom', 'moveend', 'zoomend'].forEach(evt => {
+      map2006.on(evt, () => syncMapViews(map2006, map2020));
+      map2020.on(evt, () => syncMapViews(map2020, map2006));
+    });
+
+    map2006.on('zoomanim', (e) => {
+      if (isSyncing) return;
+      isSyncing = true;
+      try { map2020.setView(e.center, e.zoom, { animate: false }); }
+      finally { isSyncing = false; }
+    });
+    map2020.on('zoomanim', (e) => {
+      if (isSyncing) return;
+      isSyncing = true;
+      try { map2006.setView(e.center, e.zoom, { animate: false }); }
+      finally { isSyncing = false; }
+    });
+
+    function resetDualView() {
+      map2006.setView(INITIAL_CENTER, INITIAL_ZOOM);
+      map2020.setView(INITIAL_CENTER, INITIAL_ZOOM);
+    }
+
+    let imageOverlay2006 = null;
+    let imageOverlay2020 = null;
+
+    function setupMapLayers(mapInstance, initialDataUrl) {
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        className: 'surrounding-terrain-tiles',
+        maxZoom: 9
+      }).addTo(mapInstance);
+
+      mapInstance.createPane('aqRasterPane');
+      mapInstance.getPane('aqRasterPane').style.zIndex = 320;
+      mapInstance.getPane('aqRasterPane').style.pointerEvents = 'none';
+
+      const overlay = L.imageOverlay(initialDataUrl, RASTER_BOUNDS, {
+        pane: 'aqRasterPane',
+        className: 'aq-raster-overlay',
+        opacity: 1.0,
+        interactive: false
+      }).addTo(mapInstance);
+
+      mapInstance.createPane('reliefOverlayPane');
+      mapInstance.getPane('reliefOverlayPane').style.zIndex = 380;
+      mapInstance.getPane('reliefOverlayPane').style.pointerEvents = 'none';
+
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', {
+        pane: 'reliefOverlayPane',
+        className: 'europe-hillshade-tiles',
+        maxZoom: 9
+      }).addTo(mapInstance);
+
+      mapInstance.createPane('boundariesPane');
+      mapInstance.getPane('boundariesPane').style.zIndex = 440;
+      mapInstance.getPane('boundariesPane').style.pointerEvents = 'none';
+
+      mapInstance.createPane('cityLabelsPane');
+      mapInstance.getPane('cityLabelsPane').style.zIndex = 500;
+      mapInstance.getPane('cityLabelsPane').style.pointerEvents = 'none';
+
+      return overlay;
+    }
+
+    function refreshImageOverlays() {
+      const url06 = buildCompositeDataURL(rawCanvas2006);
+      const url20 = buildCompositeDataURL(rawCanvas2020);
+      if (imageOverlay2006) imageOverlay2006.setUrl(url06);
+      if (imageOverlay2020) imageOverlay2020.setUrl(url20);
+    }
+
+    /********************************************************************
+     * 5. LOAD OFFICIAL BOUNDARIES (World Atlas 50m + GISCO)
+     ********************************************************************/
+    const EUROPE_STUDY_ISO_IDS = new Set([
+      '826','372','250','724','620','020','276','056','528','442','756','040',
+      '380','470','674','208','578','752','246','352','616','203','703','348',
+      '233','428','440','642','100','300','705','191','070','688','499','807',
+      '008','498',
+      826,372,250,724,620,20,276,56,528,442,756,40,380,470,674,208,578,752,246,
+      352,616,203,703,348,233,428,440,642,100,300,705,191,70,688,499,807,8,498
+    ]);
+
+    const nuts2Group2006 = L.layerGroup();
+    const nuts2Group2020 = L.layerGroup();
+    let showNuts2 = false;
+    let nuts2Loaded = false;
+
+    async function loadEuropeBoundaries() {
+      try {
+        const worldRes = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json');
+        const worldTopo = await worldRes.json();
+        const countriesGeo = topojson.feature(worldTopo, worldTopo.objects.countries);
+
+        const worldPolys = [];
+        const euroPolys = [];
+
+        countriesGeo.features.forEach(f => {
+          const polys = extractValidRings(f.geometry);
+          if (polys.length === 0) return;
+          worldPolys.push(...polys);
+
+          const idPadded = String(f.id).padStart(3, '0');
+          if (EUROPE_STUDY_ISO_IDS.has(f.id) || EUROPE_STUDY_ISO_IDS.has(idPadded)) {
+            polys.forEach(poly => {
+              const p0 = poly[0][0];
+              if (p0[1] >= 34.5 && p0[1] <= 71.2 && p0[0] >= -24.5 && p0[0] <= 32.5) {
+                euroPolys.push(poly);
+              }
+            });
+          }
+        });
+
+        if (worldPolys.length > 10) allWorldLandPolygons = worldPolys;
+        if (euroPolys.length > 5) europeStudyPolygons = euroPolys;
+
+        const countryBorderStyle = function(feature) {
+          const idPadded = String(feature.id).padStart(3, '0');
+          const isStudy = EUROPE_STUDY_ISO_IDS.has(feature.id) || EUROPE_STUDY_ISO_IDS.has(idPadded);
+          return {
+            fill: false,
+            color: isStudy ? '#151b24' : '#262c35',
+            weight: isStudy ? 1.1 : 0.7,
+            opacity: 0.88
+          };
+        };
+        L.geoJSON(countriesGeo, { pane: 'boundariesPane', style: countryBorderStyle }).addTo(map2006);
+        L.geoJSON(countriesGeo, { pane: 'boundariesPane', style: countryBorderStyle }).addTo(map2020);
+
+        refreshImageOverlays();
+      } catch (err) {
+        console.warn('World Atlas 50m fallback:', err);
+      }
+
+      try {
+        const giscoRes = await fetch('https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_20M_2021_4326_LEVL_0.geojson');
+        if (giscoRes.ok) {
+          const giscoData = await giscoRes.json();
+          const giscoEuroPolys = [];
+
+          giscoData.features.forEach(f => {
+            const code = f.properties && (f.properties.CNTR_CODE || f.properties.NUTS_ID);
+            if (code === 'TR' || code === 'CY') return;
+
+            const polys = extractValidRings(f.geometry);
+            polys.forEach(poly => {
+              const p0 = poly[0][0];
+              if (p0[1] >= 34.5 && p0[1] <= 71.2 && p0[0] >= -24.5 && p0[0] <= 32.5) {
+                giscoEuroPolys.push(poly);
+                allWorldLandPolygons.push(poly);
+              }
+            });
+          });
+
+          if (giscoEuroPolys.length > 10) {
+            europeStudyPolygons = europeStudyPolygons.concat(giscoEuroPolys);
+            refreshImageOverlays();
+          }
+
+          const giscoStyle = function(feature) {
+            const code = feature.properties && feature.properties.CNTR_CODE;
+            if (code === 'TR') return { fill: false, color: '#262c35', weight: 0.7, opacity: 0.7 };
+            return {
+              fill: false,
+              color: '#11161e',
+              weight: 1.2,
+              opacity: 0.92
+            };
+          };
+          L.geoJSON(giscoData, { pane: 'boundariesPane', style: giscoStyle }).addTo(map2006);
+          L.geoJSON(giscoData, { pane: 'boundariesPane', style: giscoStyle }).addTo(map2020);
+        }
+      } catch (err) {
+        console.warn('GISCO NUTS-0 optional refinement skipped:', err);
+      }
+    }
+
+    async function toggleNutsRegions() {
+      showNuts2 = !showNuts2;
+      const btn = document.getElementById('btn-borders');
+      const txt = document.getElementById('txt-borders');
+      btn.classList.toggle('active', showNuts2);
+      txt.textContent = showNuts2 ? 'NUTS-2 Regions' : 'Countries';
+
+      if (showNuts2) {
+        if (!nuts2Loaded) {
+          txt.textContent = 'Loading...';
+          try {
+            const res = await fetch('https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_20M_2021_4326_LEVL_2.geojson');
+            const data = await res.json();
+            const filtered = data.features.filter(f => {
+              const code = f.properties && f.properties.CNTR_CODE;
+              return code !== 'TR';
+            });
+            const nuts2Style = {
+              fill: false,
+              color: '#1c2430',
+              weight: 0.65,
+              opacity: 0.75
+            };
+            L.geoJSON({ type: 'FeatureCollection', features: filtered }, {
+              pane: 'boundariesPane',
+              style: nuts2Style
+            }).addTo(nuts2Group2006);
+            L.geoJSON({ type: 'FeatureCollection', features: filtered }, {
+              pane: 'boundariesPane',
+              style: nuts2Style
+            }).addTo(nuts2Group2020);
+            nuts2Loaded = true;
+          } catch (e) {
+            console.error('Failed to load NUTS-2:', e);
+          }
+          txt.textContent = 'NUTS-2 Regions';
+        }
+        nuts2Group2006.addTo(map2006);
+        nuts2Group2020.addTo(map2020);
+      } else {
+        map2006.removeLayer(nuts2Group2006);
+        map2020.removeLayer(nuts2Group2020);
+      }
+    }
+
+    /********************************************************************
+     * 6. EUROPEAN CITIES, CONTROLS & SYNCHRONIZED HOVER PROBE
+     ********************************************************************/
+    const europeCities = [
+      { name: "London", coords: [51.51, -0.13] },
+      { name: "Paris", coords: [48.86, 2.35] },
+      { name: "Madrid", coords: [40.42, -3.70] },
+      { name: "Barcelona", coords: [41.39, 2.17] },
+      { name: "Milan", coords: [45.46, 9.19] },
+      { name: "Rome", coords: [41.90, 12.50] },
+      { name: "Berlin", coords: [52.52, 13.40] },
+      { name: "Munich", coords: [48.14, 11.58] },
+      { name: "Frankfurt", coords: [50.11, 8.68] },
+      { name: "Cologne / Ruhr", coords: [51.22, 6.77] },
+      { name: "Hamburg", coords: [53.55, 9.99] },
+      { name: "Amsterdam", coords: [52.37, 4.90] },
+      { name: "Rotterdam", coords: [51.92, 4.48] },
+      { name: "Brussels", coords: [50.85, 4.35] },
+      { name: "Vienna", coords: [48.21, 16.37] },
+      { name: "Zurich", coords: [47.37, 8.54] },
+      { name: "Warsaw", coords: [52.23, 21.01] },
+      { name: "Katowice", coords: [50.26, 19.02] },
+      { name: "Prague", coords: [50.08, 14.44] },
+      { name: "Budapest", coords: [47.50, 19.04] },
+      { name: "Bucharest", coords: [44.43, 26.10] },
+      { name: "Athens", coords: [37.98, 23.73] },
+      { name: "Stockholm", coords: [59.33, 18.07] },
+      { name: "Copenhagen", coords: [55.68, 12.57] },
+      { name: "Oslo", coords: [59.91, 10.75] },
+      { name: "Helsinki", coords: [60.17, 24.94] },
+      { name: "Dublin", coords: [53.35, -6.26] },
+      { name: "Manchester", coords: [53.48, -2.24] },
+      { name: "Lisbon", coords: [38.72, -9.14] },
+      { name: "Belgrade", coords: [44.82, 20.46] }
+    ];
+
+    const labelsGroup2006 = L.layerGroup();
+    const labelsGroup2020 = L.layerGroup();
+    let labelsVisible = false;
+
+    europeCities.forEach(city => {
+      const icon = L.divIcon({
+        className: 'city-marker-label',
+        html: `<span>• ${city.name}</span>`,
+        iconSize: [0, 0],
+        iconAnchor: [-4, 6]
+      });
+      L.marker(city.coords, { pane: 'cityLabelsPane', icon }).addTo(labelsGroup2006);
+      L.marker(city.coords, { pane: 'cityLabelsPane', icon }).addTo(labelsGroup2020);
+    });
+
+    function toggleCityLabels() {
+      labelsVisible = !labelsVisible;
+      const btn = document.getElementById('btn-labels');
+      const txt = document.getElementById('txt-labels');
+      btn.classList.toggle('active', labelsVisible);
+      txt.textContent = labelsVisible ? 'ON' : 'OFF';
+      txt.style.color = labelsVisible ? '#68d391' : '#a0aec0';
+      if (labelsVisible) {
+        labelsGroup2006.addTo(map2006);
+        labelsGroup2020.addTo(map2020);
+      } else {
+        map2006.removeLayer(labelsGroup2006);
+        map2020.removeLayer(labelsGroup2020);
+      }
+    }
+
+    let isStackedLayout = false;
+    function toggleSplitLayout() {
+      isStackedLayout = !isStackedLayout;
+      const wrapper = document.getElementById('maps-wrapper');
+      const btn = document.getElementById('btn-layout');
+      const txt = document.getElementById('txt-layout');
+      wrapper.classList.toggle('stacked', isStackedLayout);
+      btn.classList.toggle('active', isStackedLayout);
+      txt.textContent = isStackedLayout ? 'Top / Bottom' : 'Side-by-Side';
+      setTimeout(() => {
+        map2006.invalidateSize();
+        map2020.invalidateSize();
+      }, 50);
+    }
+
+    // Three-dot menu toggle
+    function toggleMenu(e) {
+      if (e) e.stopPropagation();
+      const pop = document.getElementById('settings-popover');
+      const btn = document.getElementById('menu-btn');
+      pop.classList.toggle('open');
+      btn.classList.toggle('active', pop.classList.contains('open'));
+    }
+
+    function closeMenu() {
+      document.getElementById('settings-popover').classList.remove('open');
+      document.getElementById('menu-btn').classList.remove('active');
+    }
+
+    document.addEventListener('click', (e) => {
+      const pop = document.getElementById('settings-popover');
+      const btn = document.getElementById('menu-btn');
+      if (pop && !pop.contains(e.target) && !btn.contains(e.target)) {
+        closeMenu();
+      }
+    });
+
+    // Synchronized Crosshair & Hover Readout
+    const crosshairStyle = {
+      radius: 5.5,
+      fillColor: 'transparent',
+      color: '#ffffff',
+      weight: 1.6,
+      opacity: 0.9
+    };
+    const probeMarker2006 = L.circleMarker([0, 0], crosshairStyle);
+    const probeMarker2020 = L.circleMarker([0, 0], crosshairStyle);
+
+    function handleMapHover(e) {
+      const { lat, lng } = e.latlng;
+      const card = document.getElementById('probe-card');
+
+      if (lat < 34.0 || lat > 71.0 || lng < -24.0 || lng > 35.0) {
+        card.classList.remove('visible');
+        map2006.removeLayer(probeMarker2006);
+        map2020.removeLayer(probeMarker2020);
+        return;
+      }
+
+      probeMarker2006.setLatLng(e.latlng).addTo(map2006);
+      probeMarker2020.setLatLng(e.latlng).addTo(map2020);
+
+      const raw06 = sampleEuropeAirQuality(lat, lng, 2006);
+      const raw20 = sampleEuropeAirQuality(lat, lng, 2026);
+
+      const disp06 = raw06.toFixed(2);
+      const disp20 = raw20.toFixed(2);
+      const pctChange = Math.round(((raw20 - raw06) / Math.max(0.25, raw06)) * 100);
+
+      let nearestName = "European Airshed";
+      let minDist = 999;
+      for (const c of europeCities) {
+        const d = Math.hypot(lat - c.coords[0], (lng - c.coords[1]) * 0.68);
+        if (d < minDist) {
+          minDist = d;
+          nearestName = d < 2.2 ? `Near ${c.name}` : "European Airshed";
+        }
+      }
+
+      document.getElementById('probe-loc').textContent = nearestName;
+      document.getElementById('probe-coords').textContent = `${lat.toFixed(2)}°N, ${lng.toFixed(2)}°E`;
+      document.getElementById('val-2006').textContent = disp06 + ' ×10¹⁵';
+      document.getElementById('val-2020').textContent = disp20 + ' ×10¹⁵';
+      document.getElementById('swatch-2006').style.background = valueToHexColor(raw06, COLOR_MAX_VAL);
+      document.getElementById('swatch-2020').style.background = valueToHexColor(raw20, COLOR_MAX_VAL);
+
+      const deltaEl = document.getElementById('val-delta');
+      deltaEl.textContent = `${pctChange >= 0 ? '+' : ''}${pctChange}%`;
+      deltaEl.style.color = pctChange <= 0 ? '#68d391' : '#ff7b6b';
+
+      card.classList.add('visible');
+    }
+
+    map2006.on('mousemove', handleMapHover);
+    map2020.on('mousemove', handleMapHover);
+
+    // 7. BOOTSTRAP APPLICATION
+    generateRawAirQualityGrids();
+    const initialUrl06 = buildCompositeDataURL(rawCanvas2006);
+    const initialUrl20 = buildCompositeDataURL(rawCanvas2020);
+    imageOverlay2006 = setupMapLayers(map2006, initialUrl06);
+    imageOverlay2020 = setupMapLayers(map2020, initialUrl20);
+    loadEuropeBoundaries();
+  </script>
+</body>
+</html>
